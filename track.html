@@ -1,0 +1,797 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<title>EyeDropper Track</title>
+<style>
+  :root {
+    --bg: #000;
+    --panel: rgba(20, 20, 22, 0.92);
+    --text: #f4f4f5;
+    --muted: #a1a1aa;
+    --accent: #fafafa;
+    --border: rgba(255, 255, 255, 0.12);
+    --warn: #facc15;
+    --ok: #4ade80;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%;
+    background: var(--bg); color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+    overflow: hidden;
+    touch-action: manipulation;
+    user-select: none; -webkit-user-select: none;
+  }
+  #video {
+    position: fixed; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+  }
+  #tapLayer { position: fixed; inset: 0; }
+
+  .marker {
+    position: fixed; pointer-events: none;
+    border: 2px solid #fff;
+    box-shadow: 0 0 0 1px rgba(0,0,0,0.7), inset 0 0 0 1px rgba(0,0,0,0.7);
+    border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .marker img {
+    width: 70%; height: 70%;
+    /* White halo keeps the black icon visible on dark surfaces. */
+    filter: drop-shadow(0 0 1px #fff) drop-shadow(0 0 1px #fff);
+  }
+  .marker.lost { border-color: var(--warn); border-style: dashed; }
+  .marker.hidden { display: none; }
+
+  .status {
+    position: fixed; top: max(12px, env(safe-area-inset-top)); left: 16px; right: 16px;
+    display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; pointer-events: none;
+  }
+  .pill {
+    background: var(--panel); border: 1px solid var(--border);
+    padding: 6px 12px; border-radius: 999px; font-size: 13px; color: var(--muted);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #71717a; flex: none; }
+  .dot.on { background: var(--warn); box-shadow: 0 0 8px var(--warn); }
+  .dot.ok { background: var(--ok); }
+
+  .panel, .sheet {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    padding: 16px 16px max(16px, env(safe-area-inset-bottom));
+    background: var(--panel); border-top: 1px solid var(--border);
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  }
+  .sheet { display: none; background: rgba(20, 20, 22, 0.98); }
+  .sheet.show { display: block; }
+  .sheet h3 { margin: 0 0 8px; font-size: 17px; }
+  .sheet p { margin: 0 0 12px; color: var(--muted); font-size: 14px; line-height: 1.45; }
+  .sheet .progress { color: var(--text); font-weight: 600; min-height: 1.4em; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+  .chip {
+    font-size: 12px; padding: 3px 9px; border-radius: 999px;
+    border: 1px solid var(--border); color: var(--muted);
+  }
+  .chip.ok { color: var(--ok); border-color: rgba(74, 222, 128, 0.4); }
+  .chip.warn { color: var(--warn); border-color: rgba(250, 204, 21, 0.4); }
+
+  .row { display: flex; align-items: center; gap: 14px; }
+  .swatch {
+    width: 72px; height: 72px; flex: none;
+    border-radius: 16px; border: 2px solid var(--border);
+    background: #000;
+  }
+  .values { flex: 1; min-width: 0; }
+  .rgb {
+    width: 100%; font: 600 22px/1.2 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    color: var(--text); background: transparent; border: 0; padding: 0; outline: none;
+  }
+  .hex { margin-top: 4px; font: 14px ui-monospace, Menlo, Consolas, monospace; color: var(--muted); }
+  .raw { margin-top: 2px; font: 12px ui-monospace, Menlo, Consolas, monospace; color: #71717a; }
+  .buttons { display: flex; gap: 10px; margin-top: 14px; }
+  button {
+    flex: 1; min-height: 48px; border-radius: 12px; font: 600 16px system-ui, sans-serif;
+    border: 1px solid var(--border); background: rgba(255,255,255,0.08); color: var(--text);
+  }
+  button.primary { background: var(--accent); color: #000; border-color: transparent; }
+  button:active { transform: scale(0.98); }
+  button:disabled { opacity: 0.4; }
+
+  .overlay {
+    position: fixed; inset: 0; display: none;
+    align-items: center; justify-content: center; flex-direction: column; gap: 16px;
+    padding: 24px; text-align: center; background: #000;
+  }
+  .overlay.show { display: flex; }
+  .overlay p { color: var(--muted); max-width: 340px; margin: 0; line-height: 1.5; }
+  .overlay button { flex: none; padding: 0 28px; }
+
+  .toast {
+    position: fixed; left: 50%; bottom: 250px; transform: translateX(-50%);
+    background: var(--accent); color: #000; padding: 8px 16px; border-radius: 999px;
+    font-weight: 600; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none;
+    white-space: nowrap;
+  }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+  <video id="video" playsinline muted autoplay></video>
+  <div id="tapLayer"></div>
+  <div class="marker hidden" id="marker"><img src="eyedropper-icon.png" alt=""></div>
+
+  <div class="status">
+    <div class="pill"><span class="dot" id="torchDot"></span><span id="torchText">Flashlight off</span></div>
+    <div class="pill"><span class="dot" id="lockDot"></span><span id="lockText">Auto exposure</span></div>
+  </div>
+
+  <div class="panel" id="panel">
+    <div class="chips">
+      <span class="chip" id="trackChip">Tap an object to lock on</span>
+      <span class="chip warn" id="calChip">Not calibrated</span>
+      <span class="chip" id="deviceChip">Pixel 9 Pro profile</span>
+    </div>
+    <div class="row">
+      <div class="swatch" id="swatch"></div>
+      <div class="values">
+        <input class="rgb" id="rgb" readonly value="rgb(0, 0, 0)" aria-label="Median RGB value">
+        <div class="hex" id="hex">#000000</div>
+        <div class="raw" id="raw">uncorrected rgb(0, 0, 0)</div>
+      </div>
+    </div>
+    <div class="buttons">
+      <button id="holdBtn">Hold</button>
+      <button id="calBtn">Calibrate</button>
+      <button id="copyBtn" class="primary">Copy</button>
+    </div>
+  </div>
+
+  <div class="sheet" id="calSheet">
+    <h3>White calibration</h3>
+    <p>Fill the whole screen with plain white paper, held at the same distance you'll measure from. Keep the phone still, then tap Capture. Exposure and white balance stay locked afterwards so readings are comparable.</p>
+    <p class="progress" id="calProgress"></p>
+    <div class="buttons">
+      <button id="calCancel">Cancel</button>
+      <button id="calCapture" class="primary">Capture</button>
+    </div>
+  </div>
+
+  <div class="toast" id="toast">Copied</div>
+
+  <div class="overlay" id="overlay">
+    <h2 style="margin:0">EyeDropper</h2>
+    <p id="overlayMsg">Tap an object to lock onto it; the square follows it as the phone moves. Calibrate on white paper for corrected colors.</p>
+    <button class="primary" id="startBtn">Start camera</button>
+  </div>
+
+<script>
+// ---------- Device profile ----------
+// Google Pixel 9 Pro, Chrome on Android. The browser only receives the camera's
+// processed sRGB video, so correction relies on locking the controls Chrome
+// exposes (exposure, white balance) plus a white-reference flat field.
+const DEVICE = {
+  name: 'Pixel 9 Pro',
+  resolution: { width: { ideal: 1920 }, height: { ideal: 1080 } },
+  // Assumed white point of the LED flashlight, used to pin white balance before
+  // calibration so auto white balance can't neutralise the object's own color.
+  // Chrome maps this to the nearest camera white-balance preset.
+  torchColorTemperature: 5500,
+};
+
+const SQUARE_FRACTION = 0.10;   // square side = 10% of the screen's shorter dimension
+const SAMPLE_INTERVAL_MS = 120;
+const WHITE_REFLECTANCE = 0.9;  // typical printer paper; calibration maps it to this level
+
+// Tracking parameters (in tracking-resolution pixels).
+const TRACK_W = 240;
+const SEARCH_R = 16;
+const SEARCH_R_LOST = 40;
+const MIN_TEXTURE_STD = 6;      // template needs this much gray-level variation to be trackable
+const ACCEPT_SCORE = 0.55;
+const UPDATE_SCORE = 0.85;
+const TEMPLATE_BLEND = 0.08;
+const MIN_OVERLAP = 0.5;        // fraction of the template that must be on-frame to match
+
+// Calibration parameters.
+const CAL_W = 64;
+const CAL_FRAMES = 15;
+const CAL_SETTLE_MS = 1500;
+
+// ---------- Elements ----------
+const $ = id => document.getElementById(id);
+const video = $('video');
+const tapLayer = $('tapLayer');
+const marker = $('marker');
+const rgbEl = $('rgb'), hexEl = $('hex'), rawEl = $('raw'), swatch = $('swatch');
+const holdBtn = $('holdBtn'), copyBtn = $('copyBtn'), calBtn = $('calBtn');
+const overlay = $('overlay'), overlayMsg = $('overlayMsg');
+const toast = $('toast');
+const calSheet = $('calSheet'), calProgress = $('calProgress'), calCapture = $('calCapture');
+
+function makeCanvas() {
+  const c = document.createElement('canvas');
+  return { c, ctx: c.getContext('2d', { willReadFrequently: true }) };
+}
+const trackCv = makeCanvas();
+const sampleCv = makeCanvas();
+const calCv = makeCanvas();
+
+// ---------- Color math ----------
+const SRGB_TO_LIN = new Float32Array(256);
+for (let i = 0; i < 256; i++) {
+  const c = i / 255;
+  SRGB_TO_LIN[i] = c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+}
+function linToSrgb8(v) {
+  v = Math.min(Math.max(v, 0), 1);
+  const c = v <= 0.0031308 ? v * 12.92 : 1.055 * Math.pow(v, 1 / 2.4) - 0.055;
+  return Math.round(c * 255);
+}
+
+// ---------- State ----------
+let stream = null;
+let track = null;
+let torchOn = false;
+let held = false;
+let lastSample = 0;
+let target = null;      // tracked point, in full-resolution video pixels
+let tpl = null;         // tracking template
+let trackState = 'idle';
+let gray = null, gw = 0, gh = 0, k = 1;   // tracking frame (grayscale) and video->track scale
+let cal = null;         // white flat-field: { w, h, data: Float32Array(w*h*3) linear RGB }
+let calibrating = false;
+
+// ---------- Camera ----------
+function caps() {
+  return track && track.getCapabilities ? track.getCapabilities() : {};
+}
+function hasTorch(t) {
+  const c = t.getCapabilities ? t.getCapabilities() : {};
+  return !!c.torch;
+}
+
+async function openCamera(constraints) {
+  return navigator.mediaDevices.getUserMedia({ audio: false, video: constraints });
+}
+
+// Some phones expose several rear cameras; only one of them controls the flash.
+async function getStreamWithTorch() {
+  const base = DEVICE.resolution;
+  let s = await openCamera({ ...base, facingMode: { ideal: 'environment' } });
+  if (hasTorch(s.getVideoTracks()[0])) return s;
+
+  const devices = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
+  const currentId = s.getVideoTracks()[0].getSettings().deviceId;
+  for (const d of devices) {
+    if (d.deviceId === currentId) continue;
+    if (/front|user|facetime/i.test(d.label)) continue;
+    s.getTracks().forEach(t => t.stop());
+    try {
+      const candidate = await openCamera({ ...base, deviceId: { exact: d.deviceId } });
+      if (hasTorch(candidate.getVideoTracks()[0])) return candidate;
+      s = candidate;
+    } catch (e) {
+      s = await openCamera({ ...base, facingMode: { ideal: 'environment' } });
+    }
+  }
+  // No torch-capable camera found; fall back to the default rear camera.
+  s.getTracks().forEach(t => t.stop());
+  return openCamera({ ...base, facingMode: { ideal: 'environment' } });
+}
+
+// Apply only the settings this camera supports; torch is re-asserted each time
+// because some implementations reset it when other controls change.
+async function applyControls(settings) {
+  if (!track) return;
+  const c = caps();
+  const adv = {};
+  for (const [key, value] of Object.entries(settings)) {
+    const cap = c[key];
+    if (!cap) continue;
+    if (Array.isArray(cap)) {
+      if (cap.includes(value)) adv[key] = value;
+    } else if (typeof value === 'number' && cap.min !== undefined) {
+      adv[key] = Math.min(Math.max(value, cap.min), cap.max);
+    }
+  }
+  if (c.torch) adv.torch = true;
+  if (!Object.keys(adv).length) return;
+  try { await track.applyConstraints({ advanced: [adv] }); } catch (e) { /* unsupported combination */ }
+  updateLockStatus();
+}
+
+async function enableTorch() {
+  if (!track) return;
+  if (!hasTorch(track)) {
+    setPill('torch', false, 'Flashlight not supported on this browser/camera');
+    return;
+  }
+  try {
+    await track.applyConstraints({ advanced: [{ torch: true }] });
+    torchOn = true;
+    setPill('torch', true, 'Flashlight on');
+  } catch (e) {
+    setPill('torch', false, 'Could not turn on flashlight');
+  }
+}
+
+function setPill(which, on, text) {
+  $(which + 'Dot').className = 'dot' + (on ? (which === 'torch' ? ' on' : ' ok') : '');
+  $(which + 'Text').textContent = text;
+}
+
+function updateLockStatus() {
+  if (!track) return;
+  const s = track.getSettings();
+  const ae = s.exposureMode === 'manual';
+  const wb = s.whiteBalanceMode === 'manual';
+  if (ae && wb) setPill('lock', true, 'Exposure + WB locked');
+  else if (wb) setPill('lock', false, 'WB locked, auto exposure');
+  else if (ae) setPill('lock', false, 'Exposure locked, auto WB');
+  else setPill('lock', false, 'Auto exposure + WB');
+}
+
+async function start() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    showOverlay('Camera access is unavailable. Open this page over HTTPS in Chrome (Android) or Safari (iOS).', false);
+    return;
+  }
+  try {
+    stream = await getStreamWithTorch();
+    track = stream.getVideoTracks()[0];
+    video.srcObject = stream;
+    await video.play();
+    overlay.classList.remove('show');
+    await enableTorch();
+    // Pin white balance to the flashlight's white point until calibrated.
+    await applyControls({ whiteBalanceMode: 'manual', colorTemperature: DEVICE.torchColorTemperature });
+    updateLockStatus();
+    track.addEventListener('ended', () => showOverlay('Camera stopped. Tap to restart.', true));
+    scheduleFrame();
+  } catch (e) {
+    const denied = e && (e.name === 'NotAllowedError' || e.name === 'SecurityError');
+    showOverlay(denied
+      ? 'Camera permission was denied. Allow camera access in your browser settings, then tap Start.'
+      : 'Could not start the camera (' + (e && e.name || e) + '). Tap to try again.', true);
+  }
+}
+
+function stop() {
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = null; track = null; torchOn = false;
+  setPill('torch', false, 'Flashlight off');
+  // Exposure/WB locks don't survive a camera restart, so the calibration is no longer valid.
+  setCalibration(null);
+  tpl = null;
+  trackState = 'idle';
+}
+
+function showOverlay(msg, showButton) {
+  overlayMsg.textContent = msg;
+  $('startBtn').style.display = showButton ? '' : 'none';
+  overlay.classList.add('show');
+}
+
+async function detectDevice() {
+  let model = '';
+  try {
+    if (navigator.userAgentData && navigator.userAgentData.getHighEntropyValues) {
+      model = (await navigator.userAgentData.getHighEntropyValues(['model'])).model || '';
+    }
+  } catch (e) {}
+  if (!model) {
+    const m = navigator.userAgent.match(/Pixel [^;)]+/);
+    model = m ? m[0] : '';
+  }
+  const chip = $('deviceChip');
+  if (/Pixel 9 Pro/i.test(model)) {
+    chip.textContent = model + ' profile';
+    chip.className = 'chip ok';
+  } else {
+    chip.textContent = 'Tuned for ' + DEVICE.name + (model ? ' (this is ' + model + ')' : '');
+    chip.className = 'chip';
+  }
+}
+
+// ---------- Geometry ----------
+// Maps between screen CSS pixels and video pixels under object-fit: cover.
+function cover() {
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const W = video.videoWidth, H = video.videoHeight;
+  const s = Math.max(vw / W, vh / H);
+  return { s, ox: (vw - W * s) / 2, oy: (vh - H * s) / 2, W, H };
+}
+function squareSideScreen() {
+  return Math.round(Math.min(window.innerWidth, window.innerHeight) * SQUARE_FRACTION);
+}
+
+// ---------- Tracking ----------
+function grabTrackFrame() {
+  const W = video.videoWidth, H = video.videoHeight;
+  const w = TRACK_W, h = Math.round(TRACK_W * H / W);
+  if (trackCv.c.width !== w || trackCv.c.height !== h) { trackCv.c.width = w; trackCv.c.height = h; }
+  trackCv.ctx.drawImage(video, 0, 0, w, h);
+  const d = trackCv.ctx.getImageData(0, 0, w, h).data;
+  const resized = w !== gw || h !== gh;
+  gw = w; gh = h; k = w / W;
+  if (!gray || gray.length !== w * h) gray = new Float32Array(w * h);
+  for (let i = 0, j = 0; j < gray.length; i += 4, j++) {
+    gray[j] = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+  }
+  return resized;
+}
+
+// Zero-mean patch centred on (cx, cy); T is odd.
+function extractPatch(cx, cy, T) {
+  const h = (T - 1) / 2;
+  const out = new Float32Array(T * T);
+  let sum = 0, n = 0;
+  for (let y = 0; y < T; y++) {
+    const row = (cy - h + y) * gw + (cx - h);
+    for (let x = 0; x < T; x++, n++) { const v = gray[row + x]; out[n] = v; sum += v; }
+  }
+  const mean = sum / n;
+  let ss = 0;
+  for (let i = 0; i < n; i++) { out[i] -= mean; ss += out[i] * out[i]; }
+  return { data: out, norm: Math.sqrt(ss), std: Math.sqrt(ss / n) };
+}
+
+const odd = n => (n % 2 ? n : n - 1);
+
+// Builds a template around the target. Flat surfaces have nothing to lock onto,
+// so the template grows to take in surrounding detail before giving up.
+function createTemplate() {
+  const tx = target.x * k, ty = target.y * k;
+  const sq = squareSideScreen() / cover().s * k;
+  const maxT = odd(Math.floor(Math.min(gw, gh) * 0.45));
+  let T = Math.min(maxT, odd(Math.max(15, Math.round(sq * 2.5))));
+  let patch, cx, cy;
+  for (;;) {
+    const h = (T - 1) / 2;
+    cx = Math.min(Math.max(Math.round(tx), h), gw - 1 - h);
+    cy = Math.min(Math.max(Math.round(ty), h), gh - 1 - h);
+    patch = extractPatch(cx, cy, T);
+    if (patch.std >= MIN_TEXTURE_STD || T >= maxT) break;
+    T = Math.min(maxT, odd(Math.round(T * 1.4) + 1));
+  }
+  if (patch.std < MIN_TEXTURE_STD) { tpl = null; trackState = 'flat'; return; }
+  tpl = { T, data: patch.data, norm: patch.norm, cx, cy, offX: tx - cx, offY: ty - cy, vx: 0, vy: 0, lost: 0 };
+  trackState = 'ok';
+}
+
+// Normalised cross-correlation of the template against the frame at (cx, cy).
+// Near the frame edges only the overlapping part of the template is compared,
+// so a target close to the edge can still be followed.
+function ncc(cx, cy) {
+  const T = tpl.T, h = (T - 1) / 2, t = tpl.data;
+  const x0 = Math.max(0, h - cx), x1 = Math.min(T, gw - (cx - h));
+  const y0 = Math.max(0, h - cy), y1 = Math.min(T, gh - (cy - h));
+  const n = (x1 - x0) * (y1 - y0);
+  if (x1 <= x0 || y1 <= y0 || n < T * T * MIN_OVERLAP) return -1;
+  let sI = 0, sI2 = 0, sT = 0, sT2 = 0, sTI = 0;
+  for (let y = y0; y < y1; y++) {
+    const row = (cy - h + y) * gw + (cx - h);
+    const trow = y * T;
+    for (let x = x0; x < x1; x++) {
+      const v = gray[row + x], tv = t[trow + x];
+      sI += v; sI2 += v * v; sT += tv; sT2 += tv * tv; sTI += tv * v;
+    }
+  }
+  const varI = sI2 - sI * sI / n;
+  const varT = sT2 - sT * sT / n;
+  if (varI <= 1e-6 || varT <= 1e-6) return -1;
+  return (sTI - sT * sI / n) / Math.sqrt(varT * varI);
+}
+
+function trackStep() {
+  const inBounds = (x, y) => x >= 0 && y >= 0 && x < gw && y < gh;
+  const px = Math.round(tpl.cx + tpl.vx), py = Math.round(tpl.cy + tpl.vy);
+  const R = tpl.lost ? SEARCH_R_LOST : SEARCH_R;
+
+  // Coarse search on a 2px grid around the predicted position, then refine.
+  let best = -2, bx = tpl.cx, by = tpl.cy;
+  for (let dy = -R; dy <= R; dy += 2) {
+    for (let dx = -R; dx <= R; dx += 2) {
+      const x = px + dx, y = py + dy;
+      if (!inBounds(x, y)) continue;
+      const s = ncc(x, y);
+      if (s > best) { best = s; bx = x; by = y; }
+    }
+  }
+  const cx0 = bx, cy0 = by;
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      if (!dx && !dy) continue;
+      const x = cx0 + dx, y = cy0 + dy;
+      if (!inBounds(x, y)) continue;
+      const s = ncc(x, y);
+      if (s > best) { best = s; bx = x; by = y; }
+    }
+  }
+
+  if (best < ACCEPT_SCORE) {
+    tpl.lost++; tpl.vx = 0; tpl.vy = 0;
+    trackState = 'lost';
+    return;
+  }
+  tpl.vx = 0.7 * (bx - tpl.cx);
+  tpl.vy = 0.7 * (by - tpl.cy);
+  tpl.cx = bx; tpl.cy = by; tpl.lost = 0;
+  trackState = 'ok';
+
+  // Slowly adapt to gradual changes in scale, angle and lighting.
+  const h = (tpl.T - 1) / 2;
+  if (best > UPDATE_SCORE && bx >= h && by >= h && bx <= gw - 1 - h && by <= gh - 1 - h) {
+    const p = extractPatch(bx, by, tpl.T);
+    const t = tpl.data;
+    let mean = 0;
+    for (let i = 0; i < t.length; i++) { t[i] = (1 - TEMPLATE_BLEND) * t[i] + TEMPLATE_BLEND * p.data[i]; mean += t[i]; }
+    mean /= t.length;
+    let ss = 0;
+    for (let i = 0; i < t.length; i++) { t[i] -= mean; ss += t[i] * t[i]; }
+    tpl.norm = Math.sqrt(ss);
+  }
+
+  target.x = (bx + tpl.offX) / k;
+  target.y = (by + tpl.offY) / k;
+}
+
+// ---------- Sampling ----------
+function sampleColor() {
+  lastSample = performance.now();
+  const { s, W, H } = cover();
+  const side = Math.max(1, Math.min(W, H, Math.round(squareSideScreen() / s)));
+  const sx = Math.min(Math.max(Math.round(target.x - side / 2), 0), W - side);
+  const sy = Math.min(Math.max(Math.round(target.y - side / 2), 0), H - side);
+  if (sampleCv.c.width !== side || sampleCv.c.height !== side) { sampleCv.c.width = side; sampleCv.c.height = side; }
+  sampleCv.ctx.drawImage(video, sx, sy, side, side, 0, 0, side, side);
+  const data = sampleCv.ctx.getImageData(0, 0, side, side).data;
+
+  // Per-channel median via 256-bin histograms.
+  const hr = new Uint32Array(256), hg = new Uint32Array(256), hb = new Uint32Array(256);
+  for (let i = 0; i < data.length; i += 4) { hr[data[i]]++; hg[data[i + 1]]++; hb[data[i + 2]]++; }
+  const half = (data.length / 4) / 2;
+  const raw = [medianOf(hr, half), medianOf(hg, half), medianOf(hb, half)];
+
+  let out = raw;
+  if (cal) {
+    // Divide by the white reference at this spot (in linear light): removes the
+    // camera's color cast and the flashlight's uneven falloff in one step.
+    const w = whiteAt((sx + side / 2) / W, (sy + side / 2) / H);
+    out = raw.map((v, c) => linToSrgb8(SRGB_TO_LIN[v] / w[c] * WHITE_REFLECTANCE));
+  }
+  render(out, raw);
+}
+
+function medianOf(hist, half) {
+  let acc = 0;
+  for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= half) return v; }
+  return 255;
+}
+
+function render(rgb, raw) {
+  const [r, g, b] = rgb;
+  const css = `rgb(${r}, ${g}, ${b})`;
+  rgbEl.value = css;
+  hexEl.textContent = '#' + rgb.map(v => v.toString(16).padStart(2, '0')).join('').toUpperCase();
+  swatch.style.background = css;
+  rawEl.textContent = cal ? `uncorrected rgb(${raw.join(', ')})` : 'uncorrected (calibrate for corrected values)';
+}
+
+// ---------- Calibration ----------
+function whiteAt(u, v) {
+  const { w, h, data } = cal;
+  const x = Math.min(Math.max(u * w - 0.5, 0), w - 1);
+  const y = Math.min(Math.max(v * h - 0.5, 0), h - 1);
+  const x0 = Math.floor(x), y0 = Math.floor(y);
+  const x1 = Math.min(x0 + 1, w - 1), y1 = Math.min(y0 + 1, h - 1);
+  const fx = x - x0, fy = y - y0;
+  const out = [0, 0, 0];
+  for (let c = 0; c < 3; c++) {
+    const a = data[(y0 * w + x0) * 3 + c], b = data[(y0 * w + x1) * 3 + c];
+    const d = data[(y1 * w + x0) * 3 + c], e = data[(y1 * w + x1) * 3 + c];
+    out[c] = Math.max(1e-4, (a * (1 - fx) + b * fx) * (1 - fy) + (d * (1 - fx) + e * fx) * fy);
+  }
+  return out;
+}
+
+function setCalibration(value) {
+  cal = value;
+  const chip = $('calChip');
+  chip.textContent = cal ? 'Calibrated' : 'Not calibrated';
+  chip.className = 'chip ' + (cal ? 'ok' : 'warn');
+  calBtn.textContent = cal ? 'Recalibrate' : 'Calibrate';
+}
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const nextFrame = () => new Promise(r =>
+  video.requestVideoFrameCallback ? video.requestVideoFrameCallback(() => r()) : requestAnimationFrame(() => r()));
+
+async function runCalibration() {
+  if (!track || calibrating) return;
+  calibrating = true;
+  calCapture.disabled = true;
+  try {
+    // Let the camera expose and white-balance for the paper, then freeze both.
+    calProgress.textContent = 'Adjusting exposure…';
+    await applyControls({ exposureMode: 'continuous', whiteBalanceMode: 'continuous' });
+    await sleep(CAL_SETTLE_MS);
+    await applyControls({ exposureMode: 'manual', whiteBalanceMode: 'manual' });
+    await sleep(400);
+
+    calProgress.textContent = 'Measuring white…';
+    const W = video.videoWidth, H = video.videoHeight;
+    const w = CAL_W, h = Math.max(1, Math.round(CAL_W * H / W));
+    calCv.c.width = w; calCv.c.height = h;
+    calCv.ctx.imageSmoothingQuality = 'high';
+    const acc = new Float32Array(w * h * 3);
+    for (let f = 0; f < CAL_FRAMES; f++) {
+      await nextFrame();
+      calCv.ctx.drawImage(video, 0, 0, w, h);
+      const d = calCv.ctx.getImageData(0, 0, w, h).data;
+      for (let i = 0, j = 0; i < d.length; i += 4, j += 3) {
+        acc[j] += SRGB_TO_LIN[d[i]]; acc[j + 1] += SRGB_TO_LIN[d[i + 1]]; acc[j + 2] += SRGB_TO_LIN[d[i + 2]];
+      }
+    }
+    for (let i = 0; i < acc.length; i++) acc[i] /= CAL_FRAMES;
+    const data = boxBlur(acc, w, h, 2);
+
+    let max = 0, sumG = 0;
+    for (let i = 0; i < data.length; i += 3) {
+      max = Math.max(max, data[i], data[i + 1], data[i + 2]);
+      sumG += data[i + 1];
+    }
+    if (max > 0.95) {
+      calProgress.textContent = 'The paper is overexposed. Move a little further away and try again.';
+      await applyControls({ exposureMode: 'continuous' });
+      return;
+    }
+    if (sumG / (w * h) < 0.03) {
+      calProgress.textContent = 'Too dark. Make sure the flashlight is on and the paper fills the screen.';
+      await applyControls({ exposureMode: 'continuous' });
+      return;
+    }
+
+    setCalibration({ w, h, data });
+    const s = track.getSettings();
+    const locked = s.exposureMode === 'manual' && s.whiteBalanceMode === 'manual';
+    calSheet.classList.remove('show');
+    showToast(locked ? 'Calibrated' : 'Calibrated (camera could not lock; readings may drift)');
+  } finally {
+    calibrating = false;
+    calCapture.disabled = false;
+  }
+}
+
+// Smooths out paper texture and noise in the white reference.
+function boxBlur(src, w, h, r) {
+  const tmp = new Float32Array(src.length), out = new Float32Array(src.length);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) for (let c = 0; c < 3; c++) {
+    let s = 0, n = 0;
+    for (let dx = -r; dx <= r; dx++) { const xx = x + dx; if (xx >= 0 && xx < w) { s += src[(y * w + xx) * 3 + c]; n++; } }
+    tmp[(y * w + x) * 3 + c] = s / n;
+  }
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) for (let c = 0; c < 3; c++) {
+    let s = 0, n = 0;
+    for (let dy = -r; dy <= r; dy++) { const yy = y + dy; if (yy >= 0 && yy < h) { s += tmp[(yy * w + x) * 3 + c]; n++; } }
+    out[(y * w + x) * 3 + c] = s / n;
+  }
+  return out;
+}
+
+// ---------- Frame loop ----------
+function scheduleFrame() {
+  if (!stream) return;
+  if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(onFrame);
+  else requestAnimationFrame(onFrame);
+}
+
+function onFrame() {
+  if (!stream) return;
+  if (video.videoWidth) {
+    const resized = grabTrackFrame();
+    if (!target) target = { x: video.videoWidth / 2, y: video.videoHeight * 0.4 };
+    if (resized || (!tpl && trackState === 'idle')) createTemplate();
+    if (tpl) trackStep();
+    placeMarker();
+    updateTrackChip();
+    if (!held && performance.now() - lastSample >= SAMPLE_INTERVAL_MS) sampleColor();
+  }
+  scheduleFrame();
+}
+
+function placeMarker() {
+  const { s, ox, oy } = cover();
+  const side = squareSideScreen();
+  const x = target.x * s + ox, y = target.y * s + oy;
+  const visible = x >= 0 && y >= 0 && x <= window.innerWidth && y <= window.innerHeight;
+  marker.classList.toggle('hidden', !visible);
+  marker.classList.toggle('lost', trackState === 'lost');
+  marker.style.left = (x - side / 2) + 'px';
+  marker.style.top = (y - side / 2) + 'px';
+  marker.style.width = side + 'px';
+  marker.style.height = side + 'px';
+}
+
+function updateTrackChip() {
+  const chip = $('trackChip');
+  const states = {
+    ok: ['Tracking', 'chip ok'],
+    lost: ['Searching for target…', 'chip warn'],
+    flat: ['Too little detail to track; square fixed', 'chip warn'],
+    idle: ['Tap an object to lock on', 'chip'],
+  };
+  const [text, cls] = states[trackState];
+  if (chip.textContent !== text) { chip.textContent = text; chip.className = cls; }
+}
+
+// ---------- Input ----------
+tapLayer.addEventListener('pointerdown', e => {
+  if (!video.videoWidth || calSheet.classList.contains('show')) return;
+  const { s, ox, oy, W, H } = cover();
+  target = {
+    x: Math.min(Math.max((e.clientX - ox) / s, 0), W - 1),
+    y: Math.min(Math.max((e.clientY - oy) / s, 0), H - 1),
+  };
+  grabTrackFrame();
+  createTemplate();
+  placeMarker();
+  updateTrackChip();
+  sampleColor();  // update immediately, even while held
+});
+
+function showToast(text) {
+  toast.textContent = text;
+  toast.classList.add('show');
+  clearTimeout(showToast.t);
+  showToast.t = setTimeout(() => toast.classList.remove('show'), 1600);
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (e) {
+    rgbEl.focus(); rgbEl.select();
+    document.execCommand('copy');
+    rgbEl.blur();
+  }
+  showToast('Copied ' + text);
+}
+
+copyBtn.addEventListener('click', () => copyText(rgbEl.value));
+rgbEl.addEventListener('click', () => copyText(rgbEl.value));
+swatch.addEventListener('click', () => copyText(rgbEl.value));
+hexEl.addEventListener('click', () => copyText(hexEl.textContent));
+holdBtn.addEventListener('click', () => {
+  held = !held;
+  holdBtn.textContent = held ? 'Resume' : 'Hold';
+});
+calBtn.addEventListener('click', () => {
+  calProgress.textContent = '';
+  calSheet.classList.add('show');
+});
+$('calCancel').addEventListener('click', () => calSheet.classList.remove('show'));
+calCapture.addEventListener('click', runCalibration);
+$('startBtn').addEventListener('click', start);
+
+// Browsers drop the torch when the page is backgrounded; restore it on return.
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    stop();
+  } else if (!overlay.classList.contains('show')) {
+    start();
+  }
+});
+window.addEventListener('resize', () => { if (target && video.videoWidth) placeMarker(); });
+
+detectDevice();
+start();
+</script>
+</body>
+</html>
