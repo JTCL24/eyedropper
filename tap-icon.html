@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<title>EyeDropper Tap Icon</title>
+<style>
+  :root {
+    --bg: #000;
+    --panel: rgba(20, 20, 22, 0.92);
+    --text: #f4f4f5;
+    --muted: #a1a1aa;
+    --accent: #fafafa;
+    --border: rgba(255, 255, 255, 0.12);
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%;
+    background: var(--bg); color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+    overflow: hidden;
+    touch-action: manipulation;
+    user-select: none; -webkit-user-select: none;
+  }
+  #video {
+    position: fixed; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+  }
+  #canvas { display: none; }
+  #tapLayer { position: fixed; inset: 0; }
+
+  .marker {
+    position: fixed; pointer-events: none;
+    border: 2px solid #fff;
+    box-shadow: 0 0 0 1px rgba(0,0,0,0.7), inset 0 0 0 1px rgba(0,0,0,0.7);
+    border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .marker img {
+    width: 70%; height: 70%;
+    /* White halo keeps the black icon visible on dark surfaces. */
+    filter: drop-shadow(0 0 1px #fff) drop-shadow(0 0 1px #fff);
+  }
+
+  .status {
+    position: fixed; top: max(12px, env(safe-area-inset-top)); left: 16px; right: 16px;
+    display: flex; justify-content: center; pointer-events: none;
+  }
+  .pill {
+    background: var(--panel); border: 1px solid var(--border);
+    padding: 6px 12px; border-radius: 999px; font-size: 13px; color: var(--muted);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #71717a; }
+  .dot.on { background: #facc15; box-shadow: 0 0 8px #facc15; }
+
+  .panel {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    padding: 16px 16px max(16px, env(safe-area-inset-bottom));
+    background: var(--panel); border-top: 1px solid var(--border);
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  }
+  .hint { font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+  .row { display: flex; align-items: center; gap: 14px; }
+  .swatch {
+    width: 72px; height: 72px; flex: none;
+    border-radius: 16px; border: 2px solid var(--border);
+    background: #000;
+  }
+  .values { flex: 1; min-width: 0; }
+  .rgb {
+    width: 100%; font: 600 22px/1.2 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    color: var(--text); background: transparent; border: 0; padding: 0; outline: none;
+  }
+  .hex { margin-top: 4px; font: 14px ui-monospace, Menlo, Consolas, monospace; color: var(--muted); }
+  .buttons { display: flex; gap: 10px; margin-top: 14px; }
+  button {
+    flex: 1; min-height: 48px; border-radius: 12px; font: 600 16px system-ui, sans-serif;
+    border: 1px solid var(--border); background: rgba(255,255,255,0.08); color: var(--text);
+  }
+  button.primary { background: var(--accent); color: #000; border-color: transparent; }
+  button:active { transform: scale(0.98); }
+
+  .overlay {
+    position: fixed; inset: 0; display: none;
+    align-items: center; justify-content: center; flex-direction: column; gap: 16px;
+    padding: 24px; text-align: center; background: #000;
+  }
+  .overlay.show { display: flex; }
+  .overlay p { color: var(--muted); max-width: 340px; margin: 0; line-height: 1.5; }
+  .overlay button { flex: none; padding: 0 28px; }
+
+  .toast {
+    position: fixed; left: 50%; bottom: 220px; transform: translateX(-50%);
+    background: var(--accent); color: #000; padding: 8px 16px; border-radius: 999px;
+    font-weight: 600; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none;
+  }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+  <video id="video" playsinline muted autoplay></video>
+  <canvas id="canvas"></canvas>
+  <div id="tapLayer"></div>
+  <div class="marker" id="marker"><img src="eyedropper-icon.png" alt=""></div>
+
+  <div class="status"><div class="pill"><span class="dot" id="torchDot"></span><span id="torchText">Flashlight off</span></div></div>
+
+  <div class="panel" id="panel">
+    <div class="hint">Tap the image to sample the median color inside the square.</div>
+    <div class="row">
+      <div class="swatch" id="swatch"></div>
+      <div class="values">
+        <input class="rgb" id="rgb" readonly value="rgb(0, 0, 0)" aria-label="Median RGB value">
+        <div class="hex" id="hex">#000000</div>
+      </div>
+    </div>
+    <div class="buttons">
+      <button id="holdBtn">Hold</button>
+      <button id="copyBtn" class="primary">Copy RGB</button>
+    </div>
+  </div>
+
+  <div class="toast" id="toast">Copied</div>
+
+  <div class="overlay" id="overlay">
+    <h2 style="margin:0">EyeDropper</h2>
+    <p id="overlayMsg">Tap anywhere on the camera image to read the median color of that spot. The flashlight stays on while the app is open.</p>
+    <button class="primary" id="startBtn">Start camera</button>
+  </div>
+
+<script>
+const video = document.getElementById('video');
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d', { willReadFrequently: true });
+const tapLayer = document.getElementById('tapLayer');
+const marker = document.getElementById('marker');
+const panel = document.getElementById('panel');
+const rgbEl = document.getElementById('rgb');
+const hexEl = document.getElementById('hex');
+const swatch = document.getElementById('swatch');
+const holdBtn = document.getElementById('holdBtn');
+const copyBtn = document.getElementById('copyBtn');
+const overlay = document.getElementById('overlay');
+const overlayMsg = document.getElementById('overlayMsg');
+const torchDot = document.getElementById('torchDot');
+const torchText = document.getElementById('torchText');
+const toast = document.getElementById('toast');
+
+const SQUARE_FRACTION = 0.10;   // square side = 10% of the screen's shorter dimension
+const SAMPLE_INTERVAL_MS = 150;
+
+let stream = null;
+let track = null;
+let held = false;
+let lastSample = 0;
+// Tap point as a fraction of the screen, so it survives rotation/resizes.
+let tap = { x: 0.5, y: 0.4 };
+
+function setTorchStatus(on, msg) {
+  torchDot.classList.toggle('on', on);
+  torchText.textContent = msg || (on ? 'Flashlight on' : 'Flashlight off');
+}
+
+function hasTorch(t) {
+  const caps = t.getCapabilities ? t.getCapabilities() : {};
+  return !!caps.torch;
+}
+
+async function openCamera(constraints) {
+  return navigator.mediaDevices.getUserMedia({ audio: false, video: constraints });
+}
+
+// Some phones expose several rear cameras; only one of them controls the flash.
+async function getStreamWithTorch() {
+  const base = { width: { ideal: 1280 }, height: { ideal: 720 } };
+  let s = await openCamera({ ...base, facingMode: { ideal: 'environment' } });
+  if (hasTorch(s.getVideoTracks()[0])) return s;
+
+  const devices = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
+  const currentId = s.getVideoTracks()[0].getSettings().deviceId;
+  for (const d of devices) {
+    if (d.deviceId === currentId) continue;
+    if (/front|user|facetime/i.test(d.label)) continue;
+    s.getTracks().forEach(t => t.stop());
+    try {
+      const candidate = await openCamera({ ...base, deviceId: { exact: d.deviceId } });
+      if (hasTorch(candidate.getVideoTracks()[0])) return candidate;
+      s = candidate;
+    } catch (e) {
+      s = await openCamera({ ...base, facingMode: { ideal: 'environment' } });
+    }
+  }
+  // No torch-capable camera found; fall back to the default rear camera.
+  s.getTracks().forEach(t => t.stop());
+  return openCamera({ ...base, facingMode: { ideal: 'environment' } });
+}
+
+async function enableTorch() {
+  if (!track) return;
+  if (!hasTorch(track)) {
+    setTorchStatus(false, 'Flashlight not supported on this browser/camera');
+    return;
+  }
+  try {
+    await track.applyConstraints({ advanced: [{ torch: true }] });
+    setTorchStatus(true);
+  } catch (e) {
+    setTorchStatus(false, 'Could not turn on flashlight');
+  }
+}
+
+async function start() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    showOverlay('Camera access is unavailable. Open this page over HTTPS in Chrome (Android) or Safari (iOS).', false);
+    return;
+  }
+  try {
+    stream = await getStreamWithTorch();
+    track = stream.getVideoTracks()[0];
+    video.srcObject = stream;
+    await video.play();
+    overlay.classList.remove('show');
+    await enableTorch();
+    track.addEventListener('ended', () => showOverlay('Camera stopped. Tap to restart.', true));
+    requestAnimationFrame(loop);
+  } catch (e) {
+    const denied = e && (e.name === 'NotAllowedError' || e.name === 'SecurityError');
+    showOverlay(denied
+      ? 'Camera permission was denied. Allow camera access in your browser settings, then tap Start.'
+      : 'Could not start the camera (' + (e && e.name || e) + '). Tap to try again.', true);
+  }
+}
+
+function stop() {
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = null; track = null;
+  setTorchStatus(false);
+}
+
+function showOverlay(msg, showButton) {
+  overlayMsg.textContent = msg;
+  document.getElementById('startBtn').style.display = showButton ? '' : 'none';
+  overlay.classList.add('show');
+}
+
+// The on-screen square, in CSS pixels, clamped so it stays fully on screen.
+function squareRect() {
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const side = Math.round(Math.min(vw, vh) * SQUARE_FRACTION);
+  const left = Math.min(Math.max(tap.x * vw - side / 2, 0), vw - side);
+  const top = Math.min(Math.max(tap.y * vh - side / 2, 0), vh - side);
+  return { left, top, side };
+}
+
+function placeMarker() {
+  const { left, top, side } = squareRect();
+  marker.style.left = left + 'px';
+  marker.style.top = top + 'px';
+  marker.style.width = side + 'px';
+  marker.style.height = side + 'px';
+}
+
+tapLayer.addEventListener('pointerdown', e => {
+  tap = { x: e.clientX / window.innerWidth, y: e.clientY / window.innerHeight };
+  placeMarker();
+  if (video.videoWidth) sample();  // update immediately, even while held
+});
+window.addEventListener('resize', placeMarker);
+placeMarker();
+
+function loop(now) {
+  if (!stream) return;
+  if (!held && now - lastSample >= SAMPLE_INTERVAL_MS && video.videoWidth) {
+    lastSample = now;
+    sample();
+  }
+  requestAnimationFrame(loop);
+}
+
+function sample() {
+  lastSample = performance.now();
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const W = video.videoWidth, H = video.videoHeight;
+  // Undo object-fit: cover to map screen pixels onto video pixels.
+  const scale = Math.max(vw / W, vh / H);
+  const offX = (vw - W * scale) / 2;
+  const offY = (vh - H * scale) / 2;
+
+  const { left, top, side } = squareRect();
+  let sx = Math.round((left - offX) / scale);
+  let sy = Math.round((top - offY) / scale);
+  let sSide = Math.max(1, Math.round(side / scale));
+  sx = Math.min(Math.max(sx, 0), W - sSide);
+  sy = Math.min(Math.max(sy, 0), H - sSide);
+
+  if (canvas.width !== sSide || canvas.height !== sSide) { canvas.width = sSide; canvas.height = sSide; }
+  ctx.drawImage(video, sx, sy, sSide, sSide, 0, 0, sSide, sSide);
+  const data = ctx.getImageData(0, 0, sSide, sSide).data;
+
+  // Per-channel median via 256-bin histograms.
+  const hr = new Uint32Array(256), hg = new Uint32Array(256), hb = new Uint32Array(256);
+  for (let i = 0; i < data.length; i += 4) { hr[data[i]]++; hg[data[i + 1]]++; hb[data[i + 2]]++; }
+  const half = (data.length / 4) / 2;
+  render(medianOf(hr, half), medianOf(hg, half), medianOf(hb, half));
+}
+
+function medianOf(hist, half) {
+  let acc = 0;
+  for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= half) return v; }
+  return 255;
+}
+
+function render(r, g, b) {
+  const rgb = `rgb(${r}, ${g}, ${b})`;
+  rgbEl.value = rgb;
+  hexEl.textContent = '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('').toUpperCase();
+  swatch.style.background = rgb;
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (e) {
+    rgbEl.focus(); rgbEl.select();
+    document.execCommand('copy');
+    rgbEl.blur();
+  }
+  toast.textContent = 'Copied ' + text;
+  toast.classList.add('show');
+  clearTimeout(copyText.t);
+  copyText.t = setTimeout(() => toast.classList.remove('show'), 1400);
+}
+
+copyBtn.addEventListener('click', () => copyText(rgbEl.value));
+rgbEl.addEventListener('click', () => copyText(rgbEl.value));
+swatch.addEventListener('click', () => copyText(rgbEl.value));
+hexEl.addEventListener('click', () => copyText(hexEl.textContent));
+holdBtn.addEventListener('click', () => {
+  held = !held;
+  holdBtn.textContent = held ? 'Resume' : 'Hold';
+});
+document.getElementById('startBtn').addEventListener('click', start);
+
+// Browsers drop the torch when the page is backgrounded; restore it on return.
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    stop();
+  } else if (!overlay.classList.contains('show')) {
+    start();
+  }
+});
+
+start();
+</script>
+</body>
+</html>
